@@ -143,7 +143,7 @@ while True:
 	accountBalance += ((decimal(SoupsBNB.getTokenBalances()[1], 18)*decimal(SoupsBNB.getTokenPrices()[1], 36))*2)  *  (decimal(SoupsFarm.smartCall('balanceOf', [1, BSC.senderAccount.address])     ,18)/ decimal(SoupBNB.getTotalSupply(),18) )
 	print('$' + str(accountBalance) )
 
-	if BSC.web3.eth.getBlock('latest').number != 5093750:
+	if BSC.web3.eth.getBlock('latest').number < 5093750:
 		if decimal(SoupFarm.smartCall('pendingRewards', [4, BSC.senderAccount.address]),18) * (decimal(SoupBNB.getTokenPrices()[0], 36)) > accountBalance * 0.001:
 			SoupFarm.smartTransact('deposit', [4, 0])
 			pcsRouter.smartSwap(int(soup.balanceOf(BSC.senderAccount.address)*0.55), [soup.address, wbnb.address],0.5)
