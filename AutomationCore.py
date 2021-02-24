@@ -5,7 +5,11 @@ import time
 from web3.middleware import geth_poa_middleware
 import requests
 import json
+from dotenv import load_dotenv
+import os
+load_dotenv()
 
+privatekey = os.getenv("BOT_WALLET_PRIVATE_KEY")
 
 
 def checkFormat(inputData, typeName):
@@ -189,7 +193,8 @@ def average(data):
 		return sum(data)/len(data)
 	else:
 		0
-privatekey = ''
+
+
 BSC = blockChainInstance("https://bsc-dataseed1.ninicoin.io/", privatekey)
 
 SoupBNB = lpToken('0x284A5D8712C351Ca28417d131003120808dcE48B', ABI.pcsLPPair, BSC)
@@ -206,7 +211,7 @@ pendingrewards = (pcsRouter.getPrice(int(pendingsoups), [soups.address, wbnb.add
 soupsprice = pendingrewards/pendingsoups
 profits = profitTracker(pendingsoups)
 compoundRate = 144
-
+balancePercent = 0.13
 
 ## LOGIC ##
 while True:
@@ -248,7 +253,7 @@ while True:
 			if decimal(SoupFarm.smartCall('balanceOf', [4, BSC.senderAccount.address])     ,18) > 0:
 				SoupFarm.smartTransact('withdraw', [4, SoupFarm.smartCall('balanceOf', [4, BSC.senderAccount.address])])
 				
-			if (pendingrewards*bnbPrice)> accountBalance * 0.001:
+			if (pendingrewards*bnbPrice)> accountBalance * balancePercent:
 				while True:
 					try:
 						SoupsFarm.smartTransact('deposit', [0, 0])
