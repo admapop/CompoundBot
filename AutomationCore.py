@@ -11,7 +11,6 @@ load_dotenv()
 
 privatekey = os.getenv("BOT_WALLET_PRIVATE_KEY")
 
-
 def checkFormat(inputData, typeName):
 	rex = re.compile(getattr(formats, typeName))
 	assert rex.match(inputData), "Input is not the correct type only " + typeName +" is supported for this input."
@@ -39,6 +38,7 @@ class blockChainInstance():
 		estimatedgas = self.web3.eth.estimateGas({'from':self.web3.eth.defaultAccount,'to':txn['to'],'data':txn['data']})
 		if estimatedgas > txn['gas']:
 			txn['gas'] += int(estimatedgas*1.2)
+		#gasTracking.addGas(txn['gas'])
 		return txn
 
 	def smartCall(self, params=[], contract=None, functionName=None):
@@ -61,14 +61,20 @@ class blockChainInstance():
 				self.nonce += 1
 				txn['nonce'] = self.nonce
 				continue
-
-		BSC.waitForNextBlock()
-		return txn
+		
+		return self.waitForTx(txn)
 	def waitForNextBlock(self):
 		block = self.web3.eth.getBlock('latest').number
 		while True:
-		 if self.web3.eth.getBlock('latest').number > block+2:
+		 if self.web3.eth.getBlock('latest').number > block:
 			 break
+	def waitForTx(self,txid):
+		while True:
+			try:
+				if self.web3.eth.getTransactionReceipt(txid).blockNumber is not None:
+					return self.web3.eth.getTransactionReceipt(txid)
+			except Exception:
+				continue
 	def balance(self):
 		return self.web3.eth.getBalance(self.senderAccount.address)
 class formats():
@@ -119,9 +125,9 @@ class dex():
 				return self.blockchain.signAndShip(self.blockchain.smartTransact([int(buyValue),int(sellValue*(1-(maxSlippage/100))),path,self.blockchain.web3.eth.defaultAccount, int(time.time())+300], self.contract, 'swapExactETHForTokens')) 
 		else:
 			return self.blockchain.signAndShip(self.blockchain.smartTransact([int(buyValue),int(sellValue*(1-(maxSlippage/100))),path,self.blockchain.web3.eth.defaultAccount, int(time.time())+300], self.contract, 'swapExactTokensForTokens'))
-	def smartLiquidity(self, amount, tokenA, tokenB, maxSlippage, eth=False):
-			amountB = self.blockchain.smartCall(functionName='getAmountsOut',contract=self.contract, params=[ amount,[tokenA, tokenB]])[-1]
-			amountA = self.blockchain.smartCall(functionName='getAmountsIn',contract=self.contract, params=[ amountB,[tokenA, tokenB]])[0]
+	def smartLiquidity(self, amountA, amountB, tokenA, tokenB, maxSlippage, eth=False):
+			amountB = min(self.blockchain.smartCall(functionName='getAmountsOut',contract=self.contract, params=[ amountA,[tokenA, tokenB]])[-1], amountB)
+			amountA = min(self.blockchain.smartCall(functionName='getAmountsIn',contract=self.contract, params=[ amountB,[tokenA, tokenB]])[0], amountA)
 			return self.blockchain.signAndShip(self.blockchain.smartTransact([tokenA, tokenB, amountA, amountB, int(amountA*(1-(maxSlippage/100))), int(amountB*(1-(maxSlippage/100))),self.blockchain.web3.eth.defaultAccount, int(time.time())+300], self.contract, 'addLiquidity'))
 	def getPrice(self, amount, path):
 			return self.blockchain.smartCall(functionName='getAmountsOut',contract=self.contract, params=[ amount,path])[-1]
@@ -186,14 +192,41 @@ class profitTracker():
 	def getProfitPerDay(self):
 		return average(self.profitperday)
 		
-
+class gasTracker():
+	def __init__(self):
+		self.cycleGas = 0
+		self.gasHistory = []
+		self.averageGas = average(self.gasHistory)
+	def endGasCycle(self):
+		self.gasHistory.append(self.cycleGas)
+		if len(self.gasHistory) > 30:
+					self.gasHistory.pop(0)
+		self.averageGas = average(self.gasHistory)
+	def startGasCycle(self):
+		self.cycleGas = 0
+	def addGas(self, gas):
+		self.cycleGas += gas
 
 def average(data):
 	if len(data) > 0 and sum(data) > 0:
 		return sum(data)/len(data)
 	else:
-		0
+		return 0
 
+def retry(method, params):
+	method(params)
+
+def optimiseGasRate(precision, profitRate):
+	bestApy = 0
+	for x in range(1,(100*(10**precision))):
+		tempGasRate = ((x/(10**precision))/100)
+		profitToGas = profitRate*tempGasRate
+		compoundRate = 86400/(data['averageGasCost'] / (profitToGas))
+		apy = ((1+(((APR/100)*(1-tempGasRate))/(365*compoundRate)) )**(365*compoundRate))-1
+		if apy > bestApy:
+			gasRate = tempGasRate
+			bestApy = apy
+	return gasRate
 
 BSC = blockChainInstance("https://bsc-dataseed1.ninicoin.io/", privatekey)
 
@@ -206,28 +239,32 @@ soup = token('0x94F559aE621F1c810F31a6a620Ad7376776fe09E', ABI.erc20, BSC)
 soups = token('0x69F27E70E820197A6e495219D9aC34C8C6dA7EeE', ABI.erc20, BSC)
 wbnb = contract('0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', ABI.bnb, BSC)
 
+gasTracking = gasTracker()
+
+
 pendingsoups = SoupsFarm.smartCall('pendingRewards', [0, BSC.senderAccount.address]) + SoupsFarm.smartCall('pendingRewards', [1, BSC.senderAccount.address])
 pendingrewards = (pcsRouter.getPrice(int(pendingsoups), [soups.address, wbnb.address]  ))/(10**18)
 soupsprice = pendingrewards/pendingsoups
 profits = profitTracker(pendingsoups)
-compoundRate = 144
-balancePercent = 0.13
+gasRate = 0.005
 
+timestamp = 0
+data = {}
 ## LOGIC ##
 while True:
 	resp = requests.get('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=wbnb&order=market_cap_desc&per_page=100&page=1&sparkline=false')
-	data = resp.json()
-	bnbPrice = data[0]['current_price']
+	bnbData = resp.json()
+	bnbPrice = bnbData[0]['current_price']
+	BSC.updateGasPrice()
 
 	soupBalance = 0
-	#soupBalance += ((decimal(SoupBNB.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (decimal(SoupFarm.smartCall('balanceOf', [4, BSC.senderAccount.address])     ,18)/ decimal(SoupBNB.getTotalSupply(),18) )
 	soupbnbbalance = decimal(SoupsFarm.smartCall('balanceOf', [0, BSC.senderAccount.address])     ,18)
 	soupsbnbbalance = decimal(SoupsFarm.smartCall('balanceOf', [1, BSC.senderAccount.address])     ,18)
 	soupbnbtotalsupply = decimal(SoupBNB.getTotalSupply(),18)
 	soupsbnbtotalsupply = decimal(SoupsBNB.getTotalSupply(),18)
 	
-	soupBalance = ((decimal(SoupBNB.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (decimal(SoupsFarm.smartCall('balanceOf', [0, BSC.senderAccount.address])     ,18)/ soupbnbtotalsupply )
-	soupsBalance = ((decimal(SoupsBNB.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (decimal(SoupsFarm.smartCall('balanceOf', [1, BSC.senderAccount.address])     ,18)/ soupsbnbtotalsupply )
+	soupBalance = ((decimal(SoupBNB.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (soupbnbbalance / soupbnbtotalsupply )
+	soupsBalance = ((decimal(SoupsBNB.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (soupsbnbbalance / soupsbnbtotalsupply )
 	soupPercent = (soupbnbbalance/ soupbnbtotalsupply )*100
 	soupsPercent = (soupsbnbbalance/ soupsbnbtotalsupply )*100
 	accountBalance = soupBalance + soupsBalance
@@ -236,77 +273,142 @@ while True:
 	soupsprice = (pendingrewards/pendingsoups)*bnbPrice
 	profits.calculateProfit(pendingsoups)
 	APR = ((profits.getProfitPerSecond()*soupsprice * 365 * 86400) / accountBalance)*100
-	APY = ((1+((APR/100)/(365*compoundRate)))**(365*compoundRate))-1 
-	print('total $' + str(accountBalance+(pendingrewards*bnbPrice )) + " : soup $" + str(soupBalance) + " : soups $" + str(soupsBalance) + " : $" + str(pendingrewards*bnbPrice) + " Rewards ready for harvest")
-	print(str(soupPercent) + "% soup liquidity owned " + str(soupsPercent) + "% soups liquidity owned")
-	print("Yearly ROI $" + str(profits.getProfitPerDay()*soupsprice * 365) + " : Daily ROI $" + str(profits.getProfitPerDay()*soupsprice) + " : Hourly ROI $" + str(profits.getProfitPerHour()*soupsprice) + " : Minute ROI $" + str(profits.getProfitPerMinute()*soupsprice ))
-	print("APR " + str(APR) + "% : APY " + str(APY) + "%")
+	if gasTracking.averageGas > 0:
+		data['averageGasCost'] = gasTracking.averageGas*(BSC.gas/(10**18))
+		profitRate = (pcsRouter.getPrice(int(profits.getProfitPerSecond()), [soups.address, wbnb.address]  ))/(10**18)
+		profitToGas = profitRate*gasRate
+		if time.time() - timestamp > 60:
+			gasRate = optimiseGasRate(4,profitRate)
+			timestamp = time.time()
+
+		compoundRate = 86400/ (data['averageGasCost'] / profitToGas)
+	else:
+		compoundRate = 1
+	APY = ((1+(((APR/100)*(1-gasRate))/(365*compoundRate)) )**(365*compoundRate))-1
+	dailyRoiPercent = ((1+(((APR/100)*(1-gasRate))/(365*compoundRate)) )**(1*compoundRate))-1
+	hourlyRoiPercent = ((1+(((APR/100)*(1-gasRate))/(365*compoundRate)) )**((1/24)*compoundRate))-1
+	
+	tempData = {
+		'totalValue' : accountBalance+(pendingrewards*bnbPrice), 
+		'soupBalance' : soupBalance,
+		'soupsBalance' : soupsBalance,
+		'pendingRewards' : pendingrewards*bnbPrice,
+		'yearlyRoi' : APY*accountBalance,
+		'dailyRoi' : dailyRoiPercent*accountBalance,
+		'hourlyRoi' : hourlyRoiPercent*accountBalance,
+		'APR' : APR,
+		'APY' : APY,
+		'compoundRate' : compoundRate,
+		'gasRate' : gasRate,
+		'soupLiquiditypercent' : soupPercent,
+		'soupsLiquiditypercent' : soupsPercent
+	}
+	data.update(tempData)
+
+	print(data)
+
+	#print('total $' + str(accountBalance+(pendingrewards*bnbPrice )) + " : soup $" + str(soupBalance) + " : soups $" + str(soupsBalance) + " : $" + str(pendingrewards*bnbPrice) + " Rewards ready for harvest")
+	#print(str(soupPercent) + "% soup liquidity owned " + str(soupsPercent) + "% soups liquidity owned")
+	#print("Yearly ROI $" + str(APY*accountBalance) + " : Daily ROI $" + str(dailyRoiPercent*accountBalance) + " : Hourly ROI $" + str(hourlyRoiPercent*accountBalance))
+	#print("APR " + str(APR) + "% : APY " + str(APY) + "%")
+
 	try:
-		if BSC.web3.eth.getBlock('latest').number < 5093750:
-			if decimal(SoupFarm.smartCall('pendingRewards', [4, BSC.senderAccount.address]),18) * (bnbPrice) > accountBalance * 0.0001:
-				SoupFarm.smartTransact('deposit', [4, 0])
-				pcsRouter.smartSwap(int(soup.balanceOf(BSC.senderAccount.address)*0.55), [soup.address, wbnb.address],0.5)
-				pcsRouter.smartLiquidity(soup.balanceOf(BSC.senderAccount.address),soup.address, wbnb.address ,5)
-				SoupFarm.smartTransact('deposit', [4, SoupBNB.balanceOf(BSC.senderAccount.address)])
-				wbnb.smartTransact('withdraw',[wbnb.smartCall('balanceOf',[BSC.senderAccount.address])])
-		else:
-			if decimal(SoupFarm.smartCall('balanceOf', [4, BSC.senderAccount.address])     ,18) > 0:
-				SoupFarm.smartTransact('withdraw', [4, SoupFarm.smartCall('balanceOf', [4, BSC.senderAccount.address])])
+		if pendingrewards is not None and pendingrewards*gasRate > gasTracking.averageGas*(BSC.gas/(10**18)) and pendingrewards > 0:
+			gasTracking.startGasCycle()
+			tx = SoupsFarm.smartTransact('deposit', [0, 0])
+			
+			while True:
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =SoupsFarm.smartTransact('deposit', [0, 0])
+					
+			tx = SoupsFarm.smartTransact('deposit', [1, 0])
+			
+			while True:	
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =SoupsFarm.smartTransact('deposit', [1, 0])
+					
+			
+			tx = pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.55), [soups.address, wbnb.address],0.5)
+			
+			while True:	
 				
-			if (pendingrewards*bnbPrice)> accountBalance * balancePercent:
-				while True:
-					try:
-						SoupsFarm.smartTransact('deposit', [0, 0])
-						break
-					except:
-						continue
-				while True:	
-					try:
-						SoupsFarm.smartTransact('deposit', [1, 0])
-						break
-					except:
-						continue
-				while True:	
-					try:
-						pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.55), [soups.address, wbnb.address],0.5)
-						break
-					except:
-						continue
-				while True:	
-					try:
-						pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.5), [soups.address, wbnb.address, soup.address],0.5)
-						break
-					except:
-						continue
-				while True:	
-					try:
-						pcsRouter.smartLiquidity(soups.balanceOf(BSC.senderAccount.address),soups.address, wbnb.address ,5)
-						break
-					except:
-						continue
-				while True:	
-					try:
-						pcsRouter.smartLiquidity(soup.balanceOf(BSC.senderAccount.address),soup.address, wbnb.address ,5)
-						break
-					except:
-						continue
-				while True:	
-					try:
-						SoupsFarm.smartTransact('deposit', [1, SoupsBNB.balanceOf(BSC.senderAccount.address)])
-						break
-					except:
-						continue
-				while True:	
-					try:
-						SoupsFarm.smartTransact('deposit', [0, SoupBNB.balanceOf(BSC.senderAccount.address)])
-						break
-					except:
-						continue
-				while True:	
-					try:
-						wbnb.smartTransact('withdraw',[wbnb.smartCall('balanceOf',[BSC.senderAccount.address])])
-						break
-					except:
-						continue
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*(0.5+gasRate)), [soups.address, wbnb.address],0.5)
+					
+			tx = pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.5), [soups.address, wbnb.address, soup.address],0.5)
+			
+			while True:	
+				
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.5), [soups.address, wbnb.address, soup.address],0.5)
+					
+			
+			tx = pcsRouter.smartLiquidity(soups.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address]),soups.address, wbnb.address ,0.5)
+			
+			while True:	
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =pcsRouter.smartLiquidity(soups.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address]),soups.address, wbnb.address ,0.5)
+					
+			tx = pcsRouter.smartLiquidity(soup.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address])  ,soup.address, wbnb.address ,0.5)
+			
+			while True:	
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =pcsRouter.smartLiquidity(soup.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address])  ,soup.address, wbnb.address ,0.5)
+					
+			tx = SoupsFarm.smartTransact('deposit', [1, SoupsBNB.balanceOf(BSC.senderAccount.address)])
+				
+			while True:	
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =SoupsFarm.smartTransact('deposit', [1, SoupsBNB.balanceOf(BSC.senderAccount.address)])
+					
+			tx = SoupsFarm.smartTransact('deposit', [0, SoupBNB.balanceOf(BSC.senderAccount.address)])
+			
+			while True:	
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =SoupsFarm.smartTransact('deposit', [0, SoupBNB.balanceOf(BSC.senderAccount.address)])
+					
+			tx = wbnb.smartTransact('withdraw',[wbnb.smartCall('balanceOf',[BSC.senderAccount.address])])
+			
+			while True:	
+				if tx.status == 1:
+					gasTracking.addGas(tx.gasUsed)
+					break
+				elif tx.status == 0:
+					tx =wbnb.smartTransact('withdraw',[wbnb.smartCall('balanceOf',[BSC.senderAccount.address])])
+					
+			gasTracking.endGasCycle()
+
 	except Exception:
 		continue
+
+
+
+	array = {}
+	array[0] = 1
+	array[1] = 2
+	number = 3
+	str(number)+"," in str(array) or str(number)+"}" in str(array)
