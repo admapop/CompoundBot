@@ -230,22 +230,20 @@ def optimiseGasRate(precision, profitRate):
 
 BSC = blockChainInstance("https://bsc-dataseed1.ninicoin.io/", privatekey)
 
-SoupBNB = lpToken('0x284A5D8712C351Ca28417d131003120808dcE48B', ABI.pcsLPPair, BSC)
-SoupsBNB = lpToken('0x6304Ae062c6bDf3D24Ac86374C7019A025443247', ABI.pcsLPPair, BSC)
-SoupFarm = contract('0x12eFc306d0aDB92085025617F50B7F76D87385BF', ABI.soupFarm, BSC)
-SoupsFarm = contract('0x034aF5a55e4316D975A29672733B9791c397b6AF', ABI.soupsFarm, BSC)
+cCakeCake = lpToken('0x5D89e28fbEF459b442e19c3204A281680A48cb82', ABI.pcsLPPair, BSC)
+cCakeFarm = contract('0x38571b961896eFBbbcEf7FDd66cd787CC129674F', ABI.cCakeFarm, BSC)
 pcsRouter = dex('0x05fF2B0DB69458A0750badebc4f9e13aDd608C7F', ABI.pcsRouter, BSC)
-soup = token('0x94F559aE621F1c810F31a6a620Ad7376776fe09E', ABI.erc20, BSC)
-soups = token('0x69F27E70E820197A6e495219D9aC34C8C6dA7EeE', ABI.erc20, BSC)
+cCake = token('0x47C4f3ffc31c135AFC0C157068f6E0eEA90b7dC9', ABI.erc20, BSC)
+cake = token('0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82', ABI.erc20, BSC)
 wbnb = contract('0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', ABI.bnb, BSC)
 
 gasTracking = gasTracker()
 
-
-pendingsoups = SoupsFarm.smartCall('pendingRewards', [0, BSC.senderAccount.address]) + SoupsFarm.smartCall('pendingRewards', [1, BSC.senderAccount.address])
-pendingrewards = (pcsRouter.getPrice(int(pendingsoups), [soups.address, wbnb.address]  ))/(10**18)
-soupsprice = pendingrewards/pendingsoups
-profits = profitTracker(pendingsoups)
+# print(cCakeFarm.smartCall('pendingCarrotCake', [6, BSC.senderAccount.address]))
+pendingCarrotCake = cCakeFarm.smartCall('pendingCarrotCake', [6, BSC.senderAccount.address])
+pendingrewards = (pcsRouter.getPrice(int(pendingCarrotCake), [cCake.address, cake.address]  ))/(10**18)
+cCakePrice = pendingrewards/pendingCarrotCake
+profits = profitTracker(pendingCarrotCake)
 gasRate = 0.005
 
 timestamp = 0
@@ -257,25 +255,22 @@ while True:
 	bnbPrice = bnbData[0]['current_price']
 	BSC.updateGasPrice()
 
-	soupBalance = 0
-	soupbnbbalance = decimal(SoupsFarm.smartCall('balanceOf', [0, BSC.senderAccount.address])     ,18)
-	soupsbnbbalance = decimal(SoupsFarm.smartCall('balanceOf', [1, BSC.senderAccount.address])     ,18)
-	soupbnbtotalsupply = decimal(SoupBNB.getTotalSupply(),18)
-	soupsbnbtotalsupply = decimal(SoupsBNB.getTotalSupply(),18)
+	cCakeBalance = 0
+	cCakeCakeBalance = decimal(cCakeFarm.smartCall('userInfo', [6, BSC.senderAccount.address])[0]     ,18)
+	cCakeCakeTotalSupply = decimal(cCakeCake.getTotalSupply(),18)
 	
-	soupBalance = ((decimal(SoupBNB.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (soupbnbbalance / soupbnbtotalsupply )
-	soupsBalance = ((decimal(SoupsBNB.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (soupsbnbbalance / soupsbnbtotalsupply )
-	soupPercent = (soupbnbbalance/ soupbnbtotalsupply )*100
-	soupsPercent = (soupsbnbbalance/ soupsbnbtotalsupply )*100
-	accountBalance = soupBalance + soupsBalance
-	pendingsoups = SoupsFarm.smartCall('pendingRewards', [0, BSC.senderAccount.address]) + SoupsFarm.smartCall('pendingRewards', [1, BSC.senderAccount.address])
-	pendingrewards = (pcsRouter.getPrice(int(pendingsoups), [soups.address, wbnb.address]  ))/(10**18)
-	soupsprice = (pendingrewards/pendingsoups)*bnbPrice
-	profits.calculateProfit(pendingsoups)
-	APR = ((profits.getProfitPerSecond()*soupsprice * 365 * 86400) / accountBalance)*100
+	cCakeBalance = ((decimal(cCakeCake.getTokenBalances()[1], 18)*bnbPrice)*2)  *  (cCakeCakeBalance / cCakeCakeTotalSupply )
+	cCakePercent = (cCakeCakeBalance/ cCakeCakeTotalSupply )*100
+	accountBalance = cCakeBalance
+	pendingCarrotCake = cCakeFarm.smartCall('pendingCarrotCake', [6, BSC.senderAccount.address])
+	print(pendingCarrotCake)
+	pendingrewards = (pcsRouter.getPrice(int(pendingCarrotCake), [cCake.address, cake.address]  ))/(10**18)
+	cCakePrice = (pendingrewards/pendingCarrotCake)*bnbPrice
+	profits.calculateProfit(pendingCarrotCake)
+	APR = ((profits.getProfitPerSecond()*cCakePrice * 365 * 86400) / accountBalance)*100
 	if gasTracking.averageGas > 0:
 		data['averageGasCost'] = gasTracking.averageGas*(BSC.gas/(10**18))
-		profitRate = (pcsRouter.getPrice(int(profits.getProfitPerSecond()), [soups.address, wbnb.address]  ))/(10**18)
+		profitRate = (pcsRouter.getPrice(int(profits.getProfitPerSecond()), [cCake.address, cake.address]  ))/(10**18)
 		profitToGas = profitRate*gasRate
 		if time.time() - timestamp > 60:
 			gasRate = optimiseGasRate(4,profitRate)
@@ -290,8 +285,7 @@ while True:
 	
 	tempData = {
 		'totalValue' : accountBalance+(pendingrewards*bnbPrice), 
-		'soupBalance' : soupBalance,
-		'soupsBalance' : soupsBalance,
+		'cCakeBalance' : cCakeBalance,
 		'pendingRewards' : pendingrewards*bnbPrice,
 		'yearlyRoi' : APY*accountBalance,
 		'dailyRoi' : dailyRoiPercent*accountBalance,
@@ -300,8 +294,7 @@ while True:
 		'APY' : APY,
 		'compoundRate' : compoundRate,
 		'gasRate' : gasRate,
-		'soupLiquiditypercent' : soupPercent,
-		'soupsLiquiditypercent' : soupsPercent
+		# 'cCakeLiquidityPercent' : cCakePercent
 	}
 	data.update(tempData)
 
@@ -315,81 +308,53 @@ while True:
 	try:
 		if pendingrewards is not None and pendingrewards*gasRate > gasTracking.averageGas*(BSC.gas/(10**18)) and pendingrewards > 0:
 			gasTracking.startGasCycle()
-			tx = SoupsFarm.smartTransact('deposit', [0, 0])
+			tx = cCakeFarm.smartTransact('deposit', [0, 0])
 			
 			while True:
 				if tx.status == 1:
 					gasTracking.addGas(tx.gasUsed)
 					break
 				elif tx.status == 0:
-					tx =SoupsFarm.smartTransact('deposit', [0, 0])
+					tx =cCakeFarm.smartTransact('deposit', [0, 0])
 					
-			tx = SoupsFarm.smartTransact('deposit', [1, 0])
+			tx = cCakeFarm.smartTransact('deposit', [1, 0])
 			
 			while True:	
 				if tx.status == 1:
 					gasTracking.addGas(tx.gasUsed)
 					break
 				elif tx.status == 0:
-					tx =SoupsFarm.smartTransact('deposit', [1, 0])
+					tx =cCakeFarm.smartTransact('deposit', [1, 0])
 					
 			
-			tx = pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.55), [soups.address, wbnb.address],0.5)
-			
-			while True:	
-				
-				if tx.status == 1:
-					gasTracking.addGas(tx.gasUsed)
-					break
-				elif tx.status == 0:
-					tx =pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*(0.5+gasRate)), [soups.address, wbnb.address],0.5)
-					
-			tx = pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.5), [soups.address, wbnb.address, soup.address],0.5)
-			
+			tx = pcsRouter.smartSwap(int(cCake.balanceOf(BSC.senderAccount.address)*0.55), [cCake.address, cake.address],0.5)
+		
 			while True:	
 				
 				if tx.status == 1:
 					gasTracking.addGas(tx.gasUsed)
 					break
 				elif tx.status == 0:
-					tx =pcsRouter.smartSwap(int(soups.balanceOf(BSC.senderAccount.address)*0.5), [soups.address, wbnb.address, soup.address],0.5)
+					tx =pcsRouter.smartSwap(int(cCake.balanceOf(BSC.senderAccount.address)*0.5), [cCake.address, cake.address],0.5)
 					
 			
-			tx = pcsRouter.smartLiquidity(soups.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address]),soups.address, wbnb.address ,0.5)
-			
-			while True:	
-				if tx.status == 1:
-					gasTracking.addGas(tx.gasUsed)
-					break
-				elif tx.status == 0:
-					tx =pcsRouter.smartLiquidity(soups.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address]),soups.address, wbnb.address ,0.5)
-					
-			tx = pcsRouter.smartLiquidity(soup.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address])  ,soup.address, wbnb.address ,0.5)
+			tx = pcsRouter.smartLiquidity(cCake.balanceOf(BSC.senderAccount.address),cake.smartCall('balanceOf',[BSC.senderAccount.address]),cCake.address, cake.address ,0.5)
 			
 			while True:	
 				if tx.status == 1:
 					gasTracking.addGas(tx.gasUsed)
 					break
 				elif tx.status == 0:
-					tx =pcsRouter.smartLiquidity(soup.balanceOf(BSC.senderAccount.address),wbnb.smartCall('balanceOf',[BSC.senderAccount.address])  ,soup.address, wbnb.address ,0.5)
+					tx =pcsRouter.smartLiquidity(cCake.balanceOf(BSC.senderAccount.address),cake.smartCall('balanceOf',[BSC.senderAccount.address])  ,cCake.address, cake.address ,0.5)
 					
-			tx = SoupsFarm.smartTransact('deposit', [1, SoupsBNB.balanceOf(BSC.senderAccount.address)])
-				
+			tx = cCakeFarm.smartTransact('deposit', [0, cCakeCake.balanceOf(BSC.senderAccount.address)])
+
 			while True:	
 				if tx.status == 1:
 					gasTracking.addGas(tx.gasUsed)
 					break
 				elif tx.status == 0:
-					tx =SoupsFarm.smartTransact('deposit', [1, SoupsBNB.balanceOf(BSC.senderAccount.address)])
-					
-			tx = SoupsFarm.smartTransact('deposit', [0, SoupBNB.balanceOf(BSC.senderAccount.address)])
-			
-			while True:	
-				if tx.status == 1:
-					gasTracking.addGas(tx.gasUsed)
-					break
-				elif tx.status == 0:
-					tx =SoupsFarm.smartTransact('deposit', [0, SoupBNB.balanceOf(BSC.senderAccount.address)])
+					tx =cCakeFarm.smartTransact('deposit', [0, cCakeCake.balanceOf(BSC.senderAccount.address)])
 					
 			tx = wbnb.smartTransact('withdraw',[wbnb.smartCall('balanceOf',[BSC.senderAccount.address])])
 			
